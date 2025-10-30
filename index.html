@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Отказ от алкоголя</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f6f7f9;
+      color: #222;
+    }
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .big {
+      font-size: 40px;
+      font-weight: bold;
+      text-align: center;
+      margin: 10px 0;
+    }
+    button {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      background: #2ea5ff;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:active { background: #1c86d9; }
+  </style>
+</head>
+<body>
+  <div class="card" id="progressCard">
+    <div>📊 Прогресс</div>
+    <div id="streak" class="big">—</div>
+    <div id="saved">—</div>
+  </div>
+
+  <div class="card">
+    <div>Настройки</div>
+    <button onclick="setPrice()">💰 Указать цену</button>
+    <button onclick="setUnits()">🍺 Указать план</button>
+    <button onclick="reset()">🔁 Сбросить счётчик</button>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+
+    const BASE_URL = "https://YOUR-N8N-DOMAIN/webhook/alco"; // 👈 замени на свой
+
+    const user = tg.initDataUnsafe?.user;
+    if (!user) alert("Не удалось получить данные Telegram.");
+
+    async function loadProgress() {
+      const res = await fetch(`${BASE_URL}/progress?user_id=${user.id}`);
+      const data = await res.json();
+      if (!data.ok) return;
+      document.getElementById("streak").textContent = `${data.user.current_streak} дней`;
+      document.getElementById("saved").textContent = `Сэкономлено: ${data.week.saved_money} ₽`;
+    }
+
+    async function reset() {
+      await fetch(`${BASE_URL}/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id })
+      });
+      tg.showAlert("Счётчик сброшен!");
+      loadProgress();
+    }
+
+    async function setPrice() {
+      const price = prompt("Введите цену за единицу (₽):");
+      if (!price) return;
+      await fetch(`${BASE_URL}/setprice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id, price })
+      });
+      tg.showAlert("Цена сохранена!");
+      loadProgress();
+    }
+
+    async function setUnits() {
+      const units = prompt("Введите количество единиц в неделю:");
+      if (!units) return;
+      await fetch(`${BASE_URL}/setunits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id, units })
+      });
+      tg.showAlert("План сохранён!");
+      loadProgress();
+    }
+
+    loadProgress();
+  </script>
+</body>
+</html>
