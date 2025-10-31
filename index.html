@@ -2,79 +2,209 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Отказ от алкоголя</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OtkazAlcoFree — мини‑апп</title>
+  <meta name="color-scheme" content="light dark" />
   <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #0e1117);
+      --text: var(--tg-theme-text-color, #e6edf3);
+      --hint: var(--tg-theme-hint-color, #9aa4b2);
+      --button: var(--tg-theme-button-color, #2f81f7);
+      --button-text: var(--tg-theme-button-text-color, #ffffff);
+      --link: var(--tg-theme-link-color, #2f81f7);
+      --sec-bg: var(--tg-theme-secondary-bg-color, #161b22);
+      --ok: #13c27a; --warn:#ffb020; --bad:#ff5861;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
-      font-family: system-ui, sans-serif;
       margin: 0;
-      padding: 20px;
-      background: #f6f7f9;
-      color: #222;
+      font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans";
+      color: var(--text); background: var(--bg);
+      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
     }
-    .card {
-      background: white;
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      margin-bottom: 20px;
-    }
-    .big {
-      font-size: 40px;
-      font-weight: bold;
-      text-align: center;
-      margin: 10px 0;
-    }
-    button {
-      display: block;
-      width: 100%;
-      margin-top: 10px;
-      background: #2ea5ff;
-      color: white;
-      border: none;
-      border-radius: 12px;
-      padding: 14px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    button:active { background: #1c86d9; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+    .card { background: var(--sec-bg); border: 1px solid rgba(255,255,255,.06); border-radius: 16px; padding: 16px; box-shadow: 0 4px 24px rgba(0,0,0,.15); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .row-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    label { display:block; margin:8px 0 6px; color: var(--hint); font-size: 13px; }
+    input, select, textarea, button { width:100%; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.08); background:#0f131a; color:var(--text); }
+    textarea { min-height: 90px; resize: vertical; }
+    .muted { color:var(--hint); font-size:13px; }
+    .pill { display:inline-block; padding:6px 10px; border-radius:999px; background: rgba(255,255,255,.06); font-size:12px; }
+    .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .streak { font-weight:700; font-size:28px; }
+    .tip { font-size:13px; color:var(--hint); margin-top:8px; }
+    .btn-outline { background:transparent; border-color: rgba(255,255,255,.2); }
+    .btn-bad { background: rgba(255,88,97,.14); border-color: rgba(255,88,97,.35); }
+    .footer { text-align:center; margin-top: 18px; color: var(--hint); font-size: 12px; }
+    .switch { display:flex; gap:10px; align-items:center; }
+    .switch input { width:auto; }
+    .range-val { font-variant-numeric: tabular-nums; }
   </style>
+  <script>
+    const $ = (q) => document.querySelector(q);
+    const inTG = () => typeof Telegram !== 'undefined' && Telegram.WebApp?.initDataUnsafe;
+
+    // ——— Persist helpers ———
+    const LS = {
+      get k() { return 'oaf.settings'; },
+      read() { try { return JSON.parse(localStorage.getItem(this.k))||{} } catch(_) { return {} } },
+      write(v) { localStorage.setItem(this.k, JSON.stringify(v)); }
+    };
+
+    function getWebhookUrl(){ const p=new URLSearchParams(location.search); return p.get('webhook') || LS.read().webhook || ''; }
+    function saveWebhookUrl(url){ const s=LS.read(); s.webhook=url; LS.write(s); }
+
+    async function postJSON(url, data){
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json().catch(()=>({ok:true}));
+    }
+    function haptic(type='impact'){ try{ Telegram.WebApp.HapticFeedback?.impactOccurred(type);}catch(_){}}
+
+    // ——— Streak helpers ———
+    function daysBetween(a,b){ const d=(Date.parse(b)-Date.parse(a))/(1000*60*60*24); return Math.floor(d); }
+    function todayISO(){ const d=new Date(); d.setHours(0,0,0,0); return d.toISOString(); }
+
+    function loadState(){ const s=LS.read(); if(!s.lastDrinkISO) s.lastDrinkISO = new Date(0).toISOString(); if(!s.startISO) s.startISO = todayISO(); LS.write(s); return s; }
+    function setLastDrinkToday(){ const s=loadState(); s.lastDrinkISO = todayISO(); LS.write(s); renderStreak(); }
+    function renderStreak(){
+      const s=loadState(); const d = daysBetween(s.lastDrinkISO, todayISO());
+      $('#streak').textContent = d;
+      $('#since').textContent = s.startISO.slice(0,10);
+    }
+
+    function payload(type){
+      const user = inTG()? Telegram.WebApp.initDataUnsafe?.user : null;
+      return {
+        type,
+        meta: {
+          app: 'OtkazAlcoFree',
+          ts: new Date().toISOString(),
+          tgUserId: user?.id||null,
+          tgUsername: user?.username||null,
+          platform: 'miniapp'
+        }
+      }
+    }
+
+    async function submitCheckin(){
+      const noDrink = $('#nodrink').checked; // true — не пил
+      const p = payload('daily_checkin');
+      p.data = {
+        noDrink,
+        craving: Number($('#craving').value||0),
+        mood: $('#mood').value,
+        triggers: Array.from(document.querySelectorAll('input[name=tr]:checked')).map(x=>x.value),
+        note: $('#note').value.trim()
+      };
+
+      const wh = getWebhookUrl();
+      if(wh){ try{ await postJSON(wh, p);} catch(e){ toast('Бэкенд не ответил: '+e.message, true);} }
+      if(inTG()){
+        try{ Telegram.WebApp.sendData(JSON.stringify(p)); }catch(_){ }
+      }
+      if(!noDrink) setLastDrinkToday();
+      haptic('soft'); toast('Отчёт отправлен'); if(inTG()) Telegram.WebApp.close();
+    }
+
+    async function sendSOS(){
+      const p = payload('sos'); p.data = { craving: Number($('#craving').value||0) };
+      const wh = getWebhookUrl();
+      if(wh){ try{ await postJSON(wh, p);} catch(e){ toast('Не смог отправить SOS: '+e.message, true);} }
+      if(inTG()){
+        try{ Telegram.WebApp.sendData(JSON.stringify(p)); }catch(_){ }
+      }
+      toast('Держись. Вдох-4 • Задержка-4 • Выдох-6.');
+      haptic('impact');
+    }
+
+    function toast(text, err=false){
+      const el=document.createElement('div'); el.textContent=text; el.className='card'; el.style.position='fixed'; el.style.left='12px'; el.style.right='12px'; el.style.bottom='12px'; el.style.borderColor= err? 'rgba(255,88,97,.5)':'rgba(19,194,122,.5)';
+      document.body.appendChild(el); setTimeout(()=>el.remove(),1800);
+    }
+
+    document.addEventListener('DOMContentLoaded',()=>{
+      if(inTG()){ Telegram.WebApp.ready(); Telegram.WebApp.expand(); Telegram.WebApp.MainButton.setParams({text:'Отправить отчёт', is_visible:true}); Telegram.WebApp.onEvent('mainButtonClicked', submitCheckin); }
+      const wh=getWebhookUrl(); if(wh) $('#webhook').value=wh;
+      renderStreak();
+      $('#craving').addEventListener('input', ()=> $('#cravingVal').textContent = $('#craving').value);
+      $('#save-webhook').addEventListener('click', ()=>{ saveWebhookUrl($('#webhook').value.trim()); toast('Webhook сохранён'); haptic('soft'); });
+      $('#send').addEventListener('click', submitCheckin);
+      $('#sos').addEventListener('click', sendSOS);
+      $('#drank').addEventListener('click', ()=>{ $('#nodrink').checked=false; setLastDrinkToday(); toast('Отметил срыв. Стрик обнулён', true); });
+    });
+  </script>
 </head>
 <body>
-  <div class="card" id="progressCard">
-    <div>📊 Прогресс</div>
-    <div id="streak" class="big">—</div>
-    <div id="saved">—</div>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="pill">Мини‑апп</div>
+        <div style="font-weight:700; font-size:20px; margin-top:6px;">OtkazAlcoFree</div>
+      </div>
+      <div style="text-align:right">
+        <div class="streak" id="streak">0</div>
+        <div class="muted">дней трезвости • с <span id="since">—</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Сегодня пил?</label>
+      <div class="row">
+        <label class="switch"><input id="nodrink" type="checkbox" checked/> Не пил</label>
+        <button id="drank" class="btn-outline">Был срыв</button>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Сила тяги (0–10) <span class="range-val" id="cravingVal">0</span></label>
+          <input id="craving" type="range" min="0" max="10" value="0" />
+        </div>
+        <div>
+          <label>Настроение</label>
+          <select id="mood">
+            <option value="ok">Норм</option>
+            <option value="good">Отлично</option>
+            <option value="low">Грусть</option>
+            <option value="stress">Стресс</option>
+          </select>
+        </div>
+      </div>
+
+      <label style="margin-top:10px">Триггеры</label>
+      <div class="row-4">
+        <label class="muted"><input type="checkbox" name="tr" value="компания"/> компания</label>
+        <label class="muted"><input type="checkbox" name="tr" value="усталость"/> усталость</label>
+        <label class="muted"><input type="checkbox" name="tr" value="стресс"/> стресс</label>
+        <label class="muted"><input type="checkbox" name="tr" value="скука"/> скука</label>
+      </div>
+
+      <label style="margin-top:10px">Заметка</label>
+      <textarea id="note" placeholder="Как прошёл день? Что помогло держаться?"></textarea>
+
+      <div class="row" style="margin-top:10px">
+        <button id="sos" class="btn-bad">SOS — тяга</button>
+        <button id="send">Отправить отчёт</button>
+      </div>
+      <p class="tip">Отчёт улетает и в ваш бэкенд (если заполнён вебхук), и в бота как <code>web_app_data</code>.</p>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <label>Webhook (n8n / backend)</label>
+      <input id="webhook" placeholder="https://YOUR.n8n.cloud/webhook/otkaz" />
+      <div class="row" style="margin-top:10px">
+        <button id="save-webhook" class="btn-outline">Сохранить</button>
+        <div class="muted" style="padding:12px">Можно передать через <code>?webhook=...</code></div>
+      </div>
+    </div>
+
+    <div class="footer">Береги себя. Один день — победа.</div>
   </div>
 
-  <div class="card">
-    <div>Настройки</div>
-    <button onclick="setPrice()">💰 Указать цену</button>
-    <button onclick="setUnits()">🍺 Указать план</button>
-    <button onclick="reset()">🔁 Сбросить счётчик</button>
-  </div>
-
-  <script>
-  // ВСТАВЬ сюда свой production URL из ноды Webhook
-  const BASE = 'https://dadkey.n8n.cloud/webhook';
-
-  // единая точка вызова
-  async function call(action, payload = {}) {
-    const res = await fetch(`${BASE}/alco/action`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ...payload }),
-    });
-    return res.json();
-  }
-
-  // Примеры действий
-  function setPrice(value, user_id)  { return call('setprice', { value, user_id }); }
-  function setUnits(value, user_id)  { return call('setunits', { value, user_id }); }
-  function doReset(user_id)          { return call('reset', { user_id }); }
-  function getProgress(user_id)      { return call('progress', { user_id }); } // сейчас заглушка
-</script>
-
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
 </html>
