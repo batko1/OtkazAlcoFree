@@ -71,6 +71,76 @@
 
     @media (max-width:720px){ .row,.row-3{grid-template-columns:1fr} .checkgrid{grid-template-columns:repeat(2,1fr)} }
   </style>
+
+  <style>
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%) translateY(20px);
+      background: #222;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+      opacity: 0;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      z-index: 9999;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 90vw;
+      text-align: center;
+      pointer-events: none;
+    }
+    .toast--show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .toast--success { background: #16794f; }
+    .toast--error { background: #b3261e; }
+    .toast--info { background: #2b4c7e; }
+    .history {
+      margin: 24px 0;
+      padding: 12px 16px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #fafafa;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .history h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+    }
+    .history-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+    .history-item {
+      background: #fff;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .history-controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #f3f4f6; }
+  </style>
+
 </head>
 <body>
   <div class="app">
@@ -304,15 +374,16 @@
       } catch(e) {
         console.error('Send error:', e);
         const msg = '❌ Не удалось отправить отчёт: ' + (e && e.message ? e.message : 'ошибка сети');
-        if (tg && tg.showAlert) tg.showAlert(msg); else toast(msg);
+        if (tg && tg.showAlert) tg.showAlert(msg); else showToast(msg, 'error');
         return;
       }
 
       try { if (tg && tg.sendData) tg.sendData(JSON.stringify(payload)); } catch(e){}
 
       const okMsg = (kind==='sos_craving') ? '🚨 SOS отправлен' : '✅ Отчёт отправлен';
+      try { saveToHistory(payload); } catch(_) {}
       if (tg && tg.showPopup) tg.showPopup({ message: okMsg });
-      else toast(okMsg);
+      else showToast(okMsg, 'success');
       clearDraft();
     }
 
@@ -350,5 +421,87 @@
       t.animate([{transform:'translate(-50%,12px)',opacity:0},{transform:'translate(-50%,0)',opacity:1,offset:.2},{transform:'translate(-50%,0)',opacity:1,offset:.8},{transform:'translate(-50%,12px)',opacity:0}],{duration:1700,easing:'var(--easing)'}).onfinish=()=>t.remove();
     }
   </script>
+
+  <section class="history" id="history">
+    <h2>История отчётов (локально)</h2>
+    <ul id="historyList" class="history-list"></ul>
+    <div class="history-controls">
+      <button class="btn" id="clearHistory">Очистить историю</button>
+      <button class="btn" id="refreshHistory">Обновить</button>
+    </div>
+  </section>
+
+
+<script>
+  // --- Toast helper ---
+  function showToast(message, type = 'info', timeout = 2500) {
+    const el = document.createElement('div');
+    el.className = `toast toast--${type}`;
+    el.textContent = message;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('toast--show'));
+    setTimeout(() => {
+      el.classList.remove('toast--show');
+      setTimeout(() => el.remove(), 250);
+    }, timeout);
+  }
+
+  // Backward compatibility: if code calls toast(), map to showToast
+  function toast(msg, type='info') { showToast(msg, type); }
+
+  // --- History helpers (localStorage) ---
+  const HISTORY_KEY = 'oaf_history_v1';
+  function readHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }
+  function writeHistory(arr) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch {}
+  }
+  function saveToHistory(entry) {
+    const arr = readHistory();
+    arr.unshift(entry);
+    // keep only last 30
+    if (arr.length > 30) arr.length = 30;
+    writeHistory(arr);
+  }
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    if (!list) return;
+    const arr = readHistory();
+    list.innerHTML = '';
+    if (!arr.length) {
+      const empty = document.createElement('li');
+      empty.className = 'history-item';
+      empty.textContent = 'Пока пусто — отправь первый отчёт.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const it of arr.slice(0, 10)) {
+      const li = document.createElement('li');
+      li.className = 'history-item';
+      const d = it.start || (it.meta && it.meta.ts) || '';
+      const day = it.day || {};
+      li.innerHTML = `<strong>${d}</strong><br>
+        Статус: ${day.status ?? '-'}; Тяга: ${day.craving ?? '-'}; Настроение: ${day.mood ?? '-'}<br>
+        Триггеры: ${(day.triggers || []).join(', ') || '-'}<br>
+        Заметка: ${day.note || '-'}`;
+      list.appendChild(li);
+    }
+  }
+  function attachHistoryUI() {
+    const clr = document.getElementById('clearHistory');
+    const ref = document.getElementById('refreshHistory');
+    if (clr) clr.addEventListener('click', () => { writeHistory([]); renderHistory(); showToast('История очищена', 'info'); });
+    if (ref) ref.addEventListener('click', () => { renderHistory(); showToast('Обновлено', 'info'); });
+    renderHistory();
+  }
+
+  // Init on DOM ready
+  document.addEventListener('DOMContentLoaded', attachHistoryUI);
+</script>
+
 </body>
 </html>
